@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  # 1. DATABASE SERVICE
+  mysql-db:
+    image: mysql:8.0
+    container_name: hotel_mysql
+    restart: always
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: 290605  # Mật khẩu root
+      MYSQL_DATABASE: hotel_db           # Tên DB muốn tạo
+    volumes:
+      - mysql_data:/var/lib/mysql        # Lưu dữ liệu bền vững (tắt docker ko mất)
+      # Tự động chạy file SQL của bạn khi khởi tạo lần đầu
+      - ./Dump20251222.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "3307:3306"  # Map ra cổng 3307 ở máy ngoài để tránh đụng MySQL có sẵn
+
+  # 2. BACKEND SERVICE
+  backend:
+    build: ./back-end
+    container_name: hotel_backend
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      # Quan trọng: Trong Docker, host không phải 'localhost' mà là tên service 'mysql-db'
+      DB_HOST: mysql-db
+      DB_USER: root
+      DB_PASS: 290605
+      DB_NAME: hotel_db
+    depends_on:
+      - mysql-db
+    # volumes:
+    #   - ./hotel-app:/app        # Ánh xạ code frontend vào Docker (lưu ý đường dẫn /app phải khớp WORKDIR trong Dockerfile)
+    #   - /app/node_modules       # Giữ thư viện
+    #   - /app/dist
+
+  # 3. FRONTEND SERVICE
+  frontend:
+    build: ./hotel-app
+    container_name: hotel_frontend
+    restart: always
+    ports:
+      - "8080:80"  # Chạy web ở cổng 80 (localhost)
+    depends_on:
+      - backend
+
+volumes:
+  mysql_data:
