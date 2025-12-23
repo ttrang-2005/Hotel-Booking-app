@@ -4,10 +4,8 @@ const router = express.Router();
 const db = require('../config/db');
 
 // 1. LẤY DANH SÁCH (GET)
-// back-end/routes/rooms.js
 router.get('/', async (req, res) => {
     try {
-        // Lưu ý dòng SELECT: rt.type as name (để khớp với frontend đang dùng room.name)
         const sql = `
             SELECT r.id, r.room_number, r.status, 
                    rt.type as name,      
@@ -49,12 +47,12 @@ router.get('/:id', async (req, res) => {
 router.post('/', async (req, res) => {
     const { name, price, description, image } = req.body;
     try {
-        // Tạo loại phòng
+        // Bước 1: Tạo loại phòng trước
         const sqlType = `INSERT INTO room_types (type, price, description, image, adult, children) VALUES (?, ?, ?, ?, 2, 1)`;
         const [typeResult] = await db.query(sqlType, [name, price, description, image]);
         
-        // Tạo số phòng ngẫu nhiên (VD: R123)
-        const roomNumber = "R" + Math.floor(100 + Math.random() * 900);
+        // Bước 2: Tạo phòng vật lý (Room) và gắn với loại phòng vừa tạo
+        const roomNumber = "R" + Math.floor(100 + Math.random() * 900); // Random số phòng
         const sqlRoom = `INSERT INTO rooms (room_number, room_types_id, status) VALUES (?, ?, 'available')`;
         await db.query(sqlRoom, [roomNumber, typeResult.insertId]);
 
@@ -67,14 +65,18 @@ router.post('/', async (req, res) => {
 // 4. SỬA PHÒNG (PUT) - Dành cho Admin
 router.put('/:id', async (req, res) => {
     const { name, price, description, image } = req.body;
+    const roomId = req.params.id; // Đây là ID của phòng (rooms)
     try {
-        // Lấy room_types_id từ bảng rooms
-        const [rooms] = await db.query("SELECT room_types_id FROM rooms WHERE id = ?", [req.params.id]);
+        // Bước 1: Tìm xem phòng này thuộc loại (room_types_id) nào?
+        const [rooms] = await db.query("SELECT room_types_id FROM rooms WHERE id = ?", [roomId]);
+        
         if (rooms.length === 0) return res.status(404).json({ message: "Phòng không tồn tại" });
 
-        // Cập nhật thông tin loại phòng
+        const typeId = rooms[0].room_types_id;
+
+        // Bước 2: Cập nhật thông tin vào bảng room_types
         const sql = `UPDATE room_types SET type=?, price=?, description=?, image=? WHERE id=?`;
-        await db.query(sql, [name, price, description, image, rooms[0].room_types_id]);
+        await db.query(sql, [name, price, description, image, typeId]);
 
         res.json({ success: true, message: "Cập nhật thành công" });
     } catch (error) {
@@ -82,15 +84,40 @@ router.put('/:id', async (req, res) => {
     }
 });
 
-// 5. XÓA PHÒNG (DELETE) - Dành cho Admin
+// 5. XÓA PHÒNG (DELETE) - [ĐÃ SỬA LOGIC]
 router.delete('/:id', async (req, res) => {
+    const roomId = req.params.id; // Đây là ID của phòng (bảng rooms)
+
     try {
-        // Lấy room_types_id trước khi xóa để xóa sạch sẽ (tùy chọn)
-        // Ở đây xóa room trước, database có thể set cascade hoặc giữ lại type rác (chấp nhận được ở bài tập lớn)
-        await db.query("DELETE FROM rooms WHERE id = ?", [req.params.id]);
-        res.json({ success: true, message: "Xóa thành công" });
+        // Bước 1: Lấy thông tin phòng để biết nó thuộc loại nào (để tí nữa xóa luôn loại cho sạch)
+        const [roomInfo] = await db.query("SELECT room_types_id FROM rooms WHERE id = ?", [roomId]);
+        if (roomInfo.length === 0) {
+            return res.status(404).json({ success: false, message: "Không tìm thấy phòng để xóa" });
+        }
+        const typeId = roomInfo[0].room_types_id;
+
+        // Bước 2: QUAN TRỌNG - Kiểm tra bảng BOOKINGS (đơn đặt)
+        // Nếu phòng này (roomId) đang có đơn đặt -> Cấm xóa
+        const [bookings] = await db.query("SELECT id FROM bookings WHERE rooms_id = ?", [roomId]);
+        
+        if (bookings.length > 0) {
+            return res.status(400).json({
+                success: false,
+                message: "Không thể xóa! Phòng này đang có lịch sử đặt phòng (Booking). Hãy ẩn nó đi thay vì xóa."
+            });
+        }
+
+        // Bước 3: Nếu sạch sẽ -> Xóa Phòng (bảng rooms) trước
+        await db.query("DELETE FROM rooms WHERE id = ?", [roomId]);
+
+        // Bước 4: Xóa luôn Loại phòng (bảng room_types) vì code POST của bạn tạo mỗi phòng 1 loại riêng
+        // (Nếu không xóa dòng này, database sẽ đầy rác room_types không ai dùng)
+        await db.query("DELETE FROM room_types WHERE id = ?", [typeId]);
+
+        res.json({ success: true, message: "Đã xóa phòng thành công!" });
+
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
